@@ -65,27 +65,47 @@ def check_source_status(source="twelvedata"):
             return False
 
 # ==========================================
-# 4. لوحة الأزرار التفاعلية (M5 SPOT GOLD)
+# 4. لوحة الأزرار التفاعلية (SPOT GOLD)
 # ==========================================
-def main_menu_keyboard(source="twelvedata"):
+def main_menu_keyboard(source="twelvedata", timeframe="5min"):
     is_active = check_source_status(source)
     status_icon = "🟢 نشط" if is_active else "🔴 غير نشط"
     source_name = "Twelve Data" if source == "twelvedata" else "yfinance"
     
+    tf_names = {"1min": "1 دقيقة (M1)", "5min": "5 دقائق (M5)", "15min": "15 دقيقة (M15)"}
+    tf_display = tf_names.get(timeframe, "5 دقائق (M5)")
+    
     source_btn_text = f"⚙️ المصدر: {source_name} ({status_icon})"
+    tf_btn_text = f"⏱️ الفريم: {tf_display}"
     
     keyboard = [
         [
-            InlineKeyboardButton("▶️ تشغيل التداول المباشر (GOLD M5)", callback_data="start_trading"),
+            InlineKeyboardButton("▶️ تشغيل التداول المباشر", callback_data="start_trading"),
             InlineKeyboardButton("⏹️ إيقاف التداول", callback_data="stop_trading")
         ],
         [
             InlineKeyboardButton(source_btn_text, callback_data="toggle_source"),
-            InlineKeyboardButton("💵 تعديل مبلغ الصفقة", callback_data="change_stake_menu")
+            InlineKeyboardButton(tf_btn_text, callback_data="timeframe_menu")
         ],
         [
-            InlineKeyboardButton("📊 حالة الحساب وعداد API", callback_data="check_status"),
+            InlineKeyboardButton("💵 تعديل مبلغ الصفقة", callback_data="change_stake_menu"),
+            InlineKeyboardButton("📊 حالة الحساب وعداد API", callback_data="check_status")
+        ],
+        [
             InlineKeyboardButton("🔄 إعادة ضبط الرصيد (1000$)", callback_data="reset_balance")
+        ]
+    ]
+    return InlineKeyboardMarkup(keyboard)
+
+def timeframe_selection_keyboard():
+    keyboard = [
+        [
+            InlineKeyboardButton("⚡ دقيقة واحدة (M1)", callback_data="set_tf_1min"),
+            InlineKeyboardButton("⚡ 5 دقائق (M5)", callback_data="set_tf_5min"),
+            InlineKeyboardButton("⚡ 15 دقيقة (M15)", callback_data="set_tf_15min")
+        ],
+        [
+            InlineKeyboardButton("🔙 العودة للقائمة الرئيسية", callback_data="main_menu")
         ]
     ]
     return InlineKeyboardMarkup(keyboard)
@@ -109,13 +129,15 @@ def stake_selection_keyboard():
     return InlineKeyboardMarkup(keyboard)
 
 # ==========================================
-# 5. خوارزمية التحليل لـ (Spot Gold M5)
+# 5. خوارزمية التحليل لـ (Spot Gold) حسب الإطار الزمني
 # ==========================================
-def get_market_signals(source="twelvedata"):
+def get_market_signals(source="twelvedata", timeframe="5min"):
     try:
         if source == "yfinance":
+            yf_intervals = {"1min": "1m", "5min": "5m", "15min": "15m"}
+            interval = yf_intervals.get(timeframe, "5m")
             ticker = yf.Ticker("GC=F")
-            df = ticker.history(period="5d", interval="5m")
+            df = ticker.history(period="5d", interval=interval)
             if len(df) < 50:
                 return "WAIT", 0, 0, 0, 0, 0, 0, 0, ""
             
@@ -126,7 +148,7 @@ def get_market_signals(source="twelvedata"):
             increment_api_counter()
             params = {
                 "symbol": "GOLD",
-                "interval": "5min",
+                "interval": timeframe,
                 "outputsize": 100,
                 "apikey": TWELVE_DATA_API_KEY
             }
@@ -231,23 +253,29 @@ def get_market_signals(source="twelvedata"):
         return "WAIT", current_price, upper_band, lower_band, current_rsi, stoch_k, ema200, 0, ""
 
     except Exception as e:
-        print(f"خطأ في تحليل M5 SPOT GOLD: {e}")
+        print(f"خطأ في تحليل SPOT GOLD: {e}")
         return "WAIT", 0, 0, 0, 0, 0, 0, 0, ""
 
 # ==========================================
-# 6. حلقة التداول المباشرة لصفقات M5
+# 6. حلقة التداول المباشرة لصفقات الذهب
 # ==========================================
 async def trading_loop(chat_id: int, context: ContextTypes.DEFAULT_TYPE):
     data = context.user_data
     while data.get("is_running", False):
         source = data.get("data_source", "twelvedata")
-        signal, price, upper, lower, rsi, stoch, ema200, score, strength_text = get_market_signals(source=source)
+        timeframe = data.get("timeframe", "5min")
+        
+        signal, price, upper, lower, rsi, stoch, ema200, score, strength_text = get_market_signals(source=source, timeframe=timeframe)
         stake = data.get("current_stake", 1.0)
         
         if signal in ["PUT", "CALL"] and score >= 60:
             action_text = "🟢 شراء قوي (BUY / CALL)" if signal == "CALL" else "🔴 بيع قوي (SELL / PUT)"
             trend_text = "صاعد 📈 (فوق EMA)" if signal == "CALL" else "هابط 📉 (تحت EMA)"
             source_display = "Twelve Data (GOLD Spot)" if source == "twelvedata" else "yfinance (GC=F)"
+            
+            tf_sleep_map = {"1min": 60, "5min": 300, "15min": 900}
+            sleep_duration = tf_sleep_map.get(timeframe, 300)
+            tf_display_text = {"1min": "دقيقة واحدة (M1)", "5min": "5 دقائق (M5)", "15min": "15 دقيقة (M15)"}.get(timeframe, "5 دقائق")
             
             entry_time_str = datetime.now().strftime("%H:%M:%S")
             
@@ -259,7 +287,7 @@ async def trading_loop(chat_id: int, context: ContextTypes.DEFAULT_TYPE):
             await context.bot.send_message(
                 chat_id=chat_id,
                 text=(
-                    f"🔥 **إشارة تداول جديدة (GOLD Spot - M5):**\n"
+                    f"🔥 **إشارة تداول جديدة (GOLD Spot - {tf_display_text}):**\n"
                     f"• **الزوج:** Spot Gold Ounce vs USD (`GOLD` / `XAU/USD`)\n"
                     f"• **المصدر:** `{source_display}`\n"
                     f"• **التوصية:** {action_text}\n"
@@ -270,16 +298,16 @@ async def trading_loop(chat_id: int, context: ContextTypes.DEFAULT_TYPE):
                     f"• **الاتجاه العام:** {trend_text}\n"
                     f"• **مؤشر RSI:** {rsi:.1f}\n"
                     f"• **مؤشر Stochastic:** {stoch:.1f}\n\n"
-                    f"⏱️ **المدة الموصى بها على MT5:** 5 دقائق (M5)\n"
+                    f"⏱️ **المدة الموصى بها:** {tf_display_text}\n"
                     f"⏳ جاري متابعة الصفقة..."
                 ),
                 parse_mode="Markdown"
             )
             
-            # الانتظار لمدة 5 دقائق (300 ثانية)
-            await asyncio.sleep(300) 
+            # الانتظار حسب الفريم الزمني المختار
+            await asyncio.sleep(sleep_duration) 
             
-            _, new_price, _, _, _, _, _, _, _ = get_market_signals(source=source)
+            _, new_price, _, _, _, _, _, _, _ = get_market_signals(source=source, timeframe=timeframe)
             exit_time_str = datetime.now().strftime("%H:%M:%S")
             
             is_win = (signal == "CALL" and new_price > price) or (signal == "PUT" and new_price < price)
@@ -290,7 +318,7 @@ async def trading_loop(chat_id: int, context: ContextTypes.DEFAULT_TYPE):
                 await context.bot.send_message(
                     chat_id=chat_id,
                     text=(
-                        f"✅ **صفقة ناجحة (M5)!**\n"
+                        f"✅ **صفقة ناجحة ({tf_display_text})!**\n"
                         f"• ⏰ وقت الخروج: `{exit_time_str}`\n"
                         f"• 📍 سعر الدخول: `{price:.2f}`\n"
                         f"• 🏁 سعر الإغلاق: `{new_price:.2f}`\n"
@@ -304,7 +332,7 @@ async def trading_loop(chat_id: int, context: ContextTypes.DEFAULT_TYPE):
                 await context.bot.send_message(
                     chat_id=chat_id,
                     text=(
-                        f"❌ **صفقة خاسرة (M5)!**\n"
+                        f"❌ **صفقة خاسرة ({tf_display_text})!**\n"
                         f"• ⏰ وقت الخروج: `{exit_time_str}`\n"
                         f"• 📍 سعر الدخول: `{price:.2f}`\n"
                         f"• 🏁 سعر الإغلاق: `{new_price:.2f}`\n"
@@ -314,7 +342,7 @@ async def trading_loop(chat_id: int, context: ContextTypes.DEFAULT_TYPE):
                     parse_mode="Markdown"
                 )
                 
-        await asyncio.sleep(30)
+        await asyncio.sleep(20)
 
 # ==========================================
 # 7. المعالجات والأوامر
@@ -327,13 +355,14 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         data["current_stake"] = 1.0
         data["is_running"] = False
         data["data_source"] = "twelvedata"
+        data["timeframe"] = "5min"
 
     await update.message.reply_text(
-        "👋 **أهلاً بك في بوت إشارات الذهب المباشرة (SPOT GOLD M5)!**\n\n"
+        "👋 **أهلاً بك في بوت إشارات الذهب المباشرة (SPOT GOLD)!**\n\n"
         "🎯 **الزوج:** Spot Gold Ounce vs US Dollar (`GOLD` / `XAU/USD`)\n"
-        "⏱️ **الإطار الزمني:** 5 دقائق (M5)\n"
+        "⏱️ **الإطار الزمني الحالي:** حسب اختيارك من القائمة\n"
         "استخدم الأزرار أدناه للتحكم بجميع الخيارات:",
-        reply_markup=main_menu_keyboard(data["data_source"]),
+        reply_markup=main_menu_keyboard(data["data_source"], data["timeframe"]),
         parse_mode="Markdown"
     )
 
@@ -350,8 +379,10 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         data["current_stake"] = 1.0
         data["is_running"] = False
         data["data_source"] = "twelvedata"
+        data["timeframe"] = "5min"
 
     source = data.get("data_source", "twelvedata")
+    timeframe = data.get("timeframe", "5min")
 
     if query.data == "toggle_source":
         new_source = "yfinance" if source == "twelvedata" else "twelvedata"
@@ -362,15 +393,34 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         await query.edit_message_text(
             f"🔄 **تم تغيير مصدر البيانات إلى:** `{source_name}`\n• **حالة المصدر:** {status_str}",
-            reply_markup=main_menu_keyboard(new_source),
+            reply_markup=main_menu_keyboard(new_source, timeframe),
+            parse_mode="Markdown"
+        )
+
+    elif query.data == "timeframe_menu":
+        await query.edit_message_text(
+            f"⏱️ **اختر الإطار الزمني المطلوب:**\n"
+            f"• الإطار الحالي: `{timeframe}`",
+            reply_markup=timeframe_selection_keyboard(),
+            parse_mode="Markdown"
+        )
+
+    elif query.data.startswith("set_tf_"):
+        tf_code = query.data.replace("set_tf_", "")
+        data["timeframe"] = tf_code
+        tf_display_name = {"1min": "دقيقة واحدة (M1)", "5min": "5 دقائق (M5)", "15min": "15 دقيقة (M15)"}.get(tf_code, tf_code)
+        
+        await query.edit_message_text(
+            f"✅ **تم تغيير الفريم الزمني بنجاح إلى:** `{tf_display_name}`",
+            reply_markup=main_menu_keyboard(source, tf_code),
             parse_mode="Markdown"
         )
 
     elif query.data == "start_trading":
         if data.get("is_running", False):
             await query.edit_message_text(
-                "⚠️ **البوت يعمل بالفعل حالياً على M5!**",
-                reply_markup=main_menu_keyboard(source),
+                "⚠️ **البوت يعمل بالفعل حالياً!**",
+                reply_markup=main_menu_keyboard(source, timeframe),
                 parse_mode="Markdown"
             )
         else:
@@ -378,13 +428,15 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             is_active = check_source_status(source)
             status_str = "🟢 نشط" if is_active else "🔴 غير نشط"
             source_display = f"{'Twelve Data (GOLD)' if source == 'twelvedata' else 'yfinance (GC=F)'} ({status_str})"
+            tf_display_name = {"1min": "دقيقة واحدة (M1)", "5min": "5 دقائق (M5)", "15min": "15 دقيقة (M15)"}.get(timeframe, timeframe)
             
             await query.edit_message_text(
-                f"🟢 **تم تشغيل تحليل SPOT GOLD M5!**\n"
+                f"🟢 **تم تشغيل تحليل SPOT GOLD!**\n"
+                f"• الفريم الزمني: `{tf_display_name}`\n"
                 f"• المصدر النشط: `{source_display}`\n"
                 f"• الرصيد الحالي: {data['balance']:.2f}$\n"
                 f"• مبلغ الصفقة المحدد: {data['base_stake']:.2f}$",
-                reply_markup=main_menu_keyboard(source),
+                reply_markup=main_menu_keyboard(source, timeframe),
                 parse_mode="Markdown"
             )
             asyncio.create_task(trading_loop(chat_id, context))
@@ -393,7 +445,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         data["is_running"] = False
         await query.edit_message_text(
             "🛑 **تم إيقاف التداول.**",
-            reply_markup=main_menu_keyboard(source),
+            reply_markup=main_menu_keyboard(source, timeframe),
             parse_mode="Markdown"
         )
 
@@ -412,14 +464,14 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         data["current_stake"] = new_val
         await query.edit_message_text(
             f"✅ **تم تعديل مبلغ الصفقة بنجاح إلى: {new_val:.2f}$**",
-            reply_markup=main_menu_keyboard(source),
+            reply_markup=main_menu_keyboard(source, timeframe),
             parse_mode="Markdown"
         )
 
     elif query.data == "main_menu":
         await query.edit_message_text(
             "👋 **القائمة الرئيسية:**",
-            reply_markup=main_menu_keyboard(source),
+            reply_markup=main_menu_keyboard(source, timeframe),
             parse_mode="Markdown"
         )
 
@@ -428,6 +480,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         status_str = "🟢 نشط ومتصل" if is_active else "🔴 غير نشط"
         status_bot = "🟢 يعمل" if data.get("is_running", False) else "🔴 متوقف"
         source_display = "Twelve Data (GOLD Spot)" if source == "twelvedata" else "yfinance (GC=F)"
+        tf_display_name = {"1min": "دقيقة واحدة (M1)", "5min": "5 دقائق (M5)", "15min": "15 دقيقة (M15)"}.get(timeframe, timeframe)
         
         used = API_COUNTER["used_today"]
         limit = API_COUNTER["max_daily"]
@@ -437,7 +490,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(
             f"📊 **حالة الحساب والمصدر:**\n"
             f"• **الزوج المعتمد:** `Spot Gold Ounce vs USD`\n"
-            f"• **الفريم:** `M5 (5 Minutes)`\n"
+            f"• **الفريم الحالي:** `{tf_display_name}`\n"
             f"• **المصدر:** `{source_display}`\n"
             f"• **حالة الاتصال المباشرة:** {status_str}\n"
             f"• **الرصيد الحالي:** {data['balance']:.2f}$\n"
@@ -447,7 +500,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"• **المستهلك اليوم:** `{used} / {limit}` طلب\n"
             f"• **المتبقي اليوم:** `{remains}` طلب\n"
             f"• **نسبة الاستهلاك:** `{pct:.1f}%`",
-            reply_markup=main_menu_keyboard(source),
+            reply_markup=main_menu_keyboard(source, timeframe),
             parse_mode="Markdown"
         )
 
@@ -457,7 +510,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         data["current_stake"] = 1.0
         await query.edit_message_text(
             "🔄 **تم إعادة ضبط الرصيد بنجاح إلى 1000.00$**",
-            reply_markup=main_menu_keyboard(source),
+            reply_markup=main_menu_keyboard(source, timeframe),
             parse_mode="Markdown"
         )
 
@@ -471,7 +524,7 @@ def main():
     application.add_handler(CommandHandler("start", start_command))
     application.add_handler(CallbackQueryHandler(button_handler))
 
-    print("⚡ البوت المطور يعمل على SPOT GOLD M5...")
+    print("⚡ البوت المطور يعمل مع ميزة تغيير الفريمات للذهب...")
     application.run_polling()
 
 if __name__ == '__main__':
