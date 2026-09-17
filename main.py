@@ -37,20 +37,23 @@ TOKEN = "8916738723:AAG8YR35bIX-90HGUdjllwjGkiqbongI9lk"
 TWELVE_DATA_API_KEY = os.environ.get("TWELVE_DATA_API_KEY", "C8c6abe66da242369986f71fd1cac414")
 
 # ==========================================
-# 3. دالة فحص حالة المصدر (نشط / غير نشط)
+# 3. دالة فحص حالة المصدر بدقة (نشط / غير نشط)
 # ==========================================
 def check_source_status(source="twelvedata"):
     try:
         if source == "twelvedata":
             url = f"https://api.twelvedata.com/time_series?symbol=XAU/USD&interval=5min&outputsize=1&apikey={TWELVE_DATA_API_KEY}"
             res = requests.get(url, timeout=5)
-            data = res.json()
-            return "values" in data
+            if res.status_code == 200:
+                data = res.json()
+                return "values" in data and len(data["values"]) > 0
+            return False
         else:
             ticker = yf.Ticker("GC=F")
             df = ticker.history(period="1d", interval="5m")
             return not df.empty
-    except Exception:
+    except Exception as e:
+        print(f"خطأ أثناء فحص المصدر {source}: {e}")
         return False
 
 # ==========================================
@@ -308,7 +311,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(
         "👋 **أهلاً بك في بوت إشارات الذهب المتقدم (M5)!**\n\n"
-        "🎯 **الميزات:** إمكانية فحص المصدر النشط وتغييره بنقرة واحدة.\n"
+        "🎯 **الميزات:** الربط المباشر بـ Twelve Data و yfinance مع فحص فوري لحالة الاتصال.\n"
         "استخدم الأزرار أدناه للتحكم بجميع الخيارات:",
         reply_markup=main_menu_keyboard(data["data_source"]),
         parse_mode="Markdown"
