@@ -59,13 +59,13 @@ def check_source_status(source="twelvedata"):
     else:
         try:
             ticker = yf.Ticker("GC=F")
-            df = ticker.history(period="1d", interval="1m")
+            df = ticker.history(period="1d", interval="5m")
             return not df.empty
         except Exception:
             return False
 
 # ==========================================
-# 4. لوحة الأزرار التفاعلية (M1 SPOT GOLD)
+# 4. لوحة الأزرار التفاعلية (M5 SPOT GOLD)
 # ==========================================
 def main_menu_keyboard(source="twelvedata"):
     is_active = check_source_status(source)
@@ -76,7 +76,7 @@ def main_menu_keyboard(source="twelvedata"):
     
     keyboard = [
         [
-            InlineKeyboardButton("▶️ تشغيل التداول المباشر (GOLD M1)", callback_data="start_trading"),
+            InlineKeyboardButton("▶️ تشغيل التداول المباشر (GOLD M5)", callback_data="start_trading"),
             InlineKeyboardButton("⏹️ إيقاف التداول", callback_data="stop_trading")
         ],
         [
@@ -109,39 +109,36 @@ def stake_selection_keyboard():
     return InlineKeyboardMarkup(keyboard)
 
 # ==========================================
-# 5. خوارزمية التحليل لـ (Spot Gold M1)
+# 5. خوارزمية التحليل لـ (Spot Gold M5)
 # ==========================================
 def get_market_signals(source="twelvedata"):
     try:
         if source == "yfinance":
-            # Gold Spot Futures على yfinance (GC=F)
             ticker = yf.Ticker("GC=F")
-            df = ticker.history(period="1d", interval="1m")
-            if len(df) < 30:
+            df = ticker.history(period="5d", interval="5m")
+            if len(df) < 50:
                 return "WAIT", 0, 0, 0, 0, 0, 0, 0, ""
             
             close = df['Close']
             high = df['High']
             low = df['Low']
         else:
-            # Spot Gold Ounce vs USD على Twelve Data (GOLD أو XAU/USD)
             increment_api_counter()
             params = {
                 "symbol": "GOLD",
-                "interval": "1min",
+                "interval": "5min",
                 "outputsize": 100,
                 "apikey": TWELVE_DATA_API_KEY
             }
             response = requests.get("https://api.twelvedata.com/time_series", params=params, timeout=10)
             data = response.json()
 
-            if "values" not in data or len(data["values"]) < 30:
-                # تجربة الرمز المترادف XAU/USD
+            if "values" not in data or len(data["values"]) < 50:
                 increment_api_counter()
                 params["symbol"] = "XAU/USD"
                 response = requests.get("https://api.twelvedata.com/time_series", params=params, timeout=10)
                 data = response.json()
-                if "values" not in data or len(data["values"]) < 30:
+                if "values" not in data or len(data["values"]) < 50:
                     return "WAIT", 0, 0, 0, 0, 0, 0, 0, ""
 
             df = pd.DataFrame(data["values"]).iloc[::-1].reset_index(drop=True)
@@ -151,9 +148,9 @@ def get_market_signals(source="twelvedata"):
 
         current_price = close.iloc[-1]
 
-        # 1. المتوسطات المتحركة لفريم M1 السريع (EMA 50 & EMA 20)
+        # 1. المتوسطات المتحركة (EMA 200 & EMA 50)
+        ema200 = close.ewm(span=200, adjust=False).mean().iloc[-1] if len(close) >= 200 else close.ewm(span=len(close), adjust=False).mean().iloc[-1]
         ema50 = close.ewm(span=50, adjust=False).mean().iloc[-1]
-        ema20 = close.ewm(span=20, adjust=False).mean().iloc[-1]
 
         # 2. Bollinger Bands (20, 2)
         sma20 = close.rolling(window=20).mean()
@@ -161,15 +158,15 @@ def get_market_signals(source="twelvedata"):
         upper_band = (sma20 + (2 * std20)).iloc[-1]
         lower_band = (sma20 - (2 * std20)).iloc[-1]
 
-        # 3. RSI Fast (9) لـ M1
+        # 3. RSI (14)
         delta = close.diff()
-        gain = (delta.where(delta > 0, 0)).rolling(window=9).mean()
-        loss = (-delta.where(delta < 0, 0)).rolling(window=9).mean()
+        gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+        loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
         rs = gain / loss
         rsi_series = 100 - (100 / (1 + rs))
         current_rsi = rsi_series.iloc[-1]
 
-        # 4. Stochastic Fast (5, 3, 3)
+        # 4. Stochastic Oscillator (5, 3, 3)
         low_5 = low.rolling(window=5).min()
         high_5 = high.rolling(window=5).max()
         k_fast = 100 * ((close - low_5) / (high_5 - low_5))
@@ -182,45 +179,46 @@ def get_market_signals(source="twelvedata"):
         signal_line = macd_line.ewm(span=9, adjust=False).mean()
         macd_hist = (macd_line - signal_line).iloc[-1]
 
-        # حساب قوة الإشارة الشديدة لـ M1
         score = 0
         signal = "WAIT"
 
         buy_conditions = [
-            current_price > ema20,
-            current_rsi <= 35,
-            stoch_k <= 30,
+            current_price > ema200 or current_price > ema50,
+            current_rsi <= 40,
+            stoch_k <= 35,
             current_price <= lower_band
         ]
         
         sell_conditions = [
-            current_price < ema20,
-            current_rsi >= 65,
-            stoch_k >= 70,
+            current_price < ema200 or current_price < ema50,
+            current_rsi >= 60,
+            stoch_k >= 65,
             current_price >= upper_band
         ]
 
-        if sum(buy_conditions) >= 2 and current_rsi <= 40:
+        if sum(buy_conditions) >= 2 and current_rsi <= 45:
             signal = "CALL"
             score = 60
-            if current_price > ema50: score += 10
-            if current_rsi <= 25: score += 10
-            if stoch_k <= 20: score += 10
-            if current_price <= lower_band: score += 10
-            if macd_hist > 0: score += 10
+            if current_price > ema200: score += 10
+            if current_rsi <= 30: score += 10
+            if current_rsi <= 20: score += 5
+            if stoch_k <= 20: score += 5
+            if current_price <= lower_band: score += 5
+            if macd_hist > 0: score += 5
 
-        elif sum(sell_conditions) >= 2 and current_rsi >= 60:
+        elif sum(sell_conditions) >= 2 and current_rsi >= 55:
             signal = "PUT"
             score = 60
-            if current_price < ema50: score += 10
-            if current_rsi >= 75: score += 10
-            if stoch_k >= 80: score += 10
-            if current_price >= upper_band: score += 10
-            if macd_hist < 0: score += 10
+            if current_price < ema200: score += 10
+            if current_rsi >= 70: score += 10
+            if current_rsi >= 80: score += 5
+            if stoch_k >= 80: score += 5
+            if current_price >= upper_band: score += 5
+            if macd_hist < 0: score += 5
 
         if signal in ["CALL", "PUT"] and score >= 60:
             if score >= 90:
-                strength_text = f"⭐⭐⭐⭐⭐ {score}% (دقيقة جداً 🚀)"
+                strength_text = f"⭐⭐⭐⭐⭐ {score}% (فائقة القوة 🚀)"
             elif score >= 80:
                 strength_text = f"⭐⭐⭐⭐ {score}% (قوية جداً 💪)"
             elif score >= 70:
@@ -228,40 +226,40 @@ def get_market_signals(source="twelvedata"):
             else:
                 strength_text = f"⭐⭐ {score}% (جيدة ⚡)"
 
-            return signal, current_price, upper_band, lower_band, current_rsi, stoch_k, ema50, score, strength_text
+            return signal, current_price, upper_band, lower_band, current_rsi, stoch_k, ema200, score, strength_text
 
-        return "WAIT", current_price, upper_band, lower_band, current_rsi, stoch_k, ema50, 0, ""
+        return "WAIT", current_price, upper_band, lower_band, current_rsi, stoch_k, ema200, 0, ""
 
     except Exception as e:
-        print(f"خطأ في تحليل M1 SPOT GOLD: {e}")
+        print(f"خطأ في تحليل M5 SPOT GOLD: {e}")
         return "WAIT", 0, 0, 0, 0, 0, 0, 0, ""
 
 # ==========================================
-# 6. حلقة التداول المباشرة لصفقات M1 (دقيقة واحدة)
+# 6. حلقة التداول المباشرة لصفقات M5
 # ==========================================
 async def trading_loop(chat_id: int, context: ContextTypes.DEFAULT_TYPE):
     data = context.user_data
     while data.get("is_running", False):
         source = data.get("data_source", "twelvedata")
-        signal, price, upper, lower, rsi, stoch, ema50, score, strength_text = get_market_signals(source=source)
+        signal, price, upper, lower, rsi, stoch, ema200, score, strength_text = get_market_signals(source=source)
         stake = data.get("current_stake", 1.0)
         
         if signal in ["PUT", "CALL"] and score >= 60:
-            action_text = "🟢 شراء سريع (BUY / CALL)" if signal == "CALL" else "🔴 بيع سريع (SELL / PUT)"
+            action_text = "🟢 شراء قوي (BUY / CALL)" if signal == "CALL" else "🔴 بيع قوي (SELL / PUT)"
             trend_text = "صاعد 📈 (فوق EMA)" if signal == "CALL" else "هابط 📉 (تحت EMA)"
             source_display = "Twelve Data (GOLD Spot)" if source == "twelvedata" else "yfinance (GC=F)"
             
             entry_time_str = datetime.now().strftime("%H:%M:%S")
             
             if signal == "CALL":
-                entry_zone_str = f"{price:.2f} - {(price + 0.20):.2f}"
+                entry_zone_str = f"{price:.2f} - {(price + 0.50):.2f}"
             else:
-                entry_zone_str = f"{(price - 0.20):.2f} - {price:.2f}"
+                entry_zone_str = f"{(price - 0.50):.2f} - {price:.2f}"
             
             await context.bot.send_message(
                 chat_id=chat_id,
                 text=(
-                    f"🔥 **إشارة تداول جديدة (GOLD Spot - M1):**\n"
+                    f"🔥 **إشارة تداول جديدة (GOLD Spot - M5):**\n"
                     f"• **الزوج:** Spot Gold Ounce vs USD (`GOLD` / `XAU/USD`)\n"
                     f"• **المصدر:** `{source_display}`\n"
                     f"• **التوصية:** {action_text}\n"
@@ -269,17 +267,17 @@ async def trading_loop(chat_id: int, context: ContextTypes.DEFAULT_TYPE):
                     f"• **⏰ وقت الدخول:** `{entry_time_str}`\n"
                     f"• **📍 سعر / نطاق الدخول:** `{price:.2f}` *(نطاق: {entry_zone_str})*\n"
                     f"• **💵 مبلغ الصفقة:** `{stake:.2f}$`\n"
-                    f"• **الاتجاه:** {trend_text}\n"
-                    f"• **مؤشر RSI (9):** {rsi:.1f}\n"
+                    f"• **الاتجاه العام:** {trend_text}\n"
+                    f"• **مؤشر RSI:** {rsi:.1f}\n"
                     f"• **مؤشر Stochastic:** {stoch:.1f}\n\n"
-                    f"⏱️ **المدة الموصى بها على MT5:** 1 دقيقة (M1)\n"
+                    f"⏱️ **المدة الموصى بها على MT5:** 5 دقائق (M5)\n"
                     f"⏳ جاري متابعة الصفقة..."
                 ),
                 parse_mode="Markdown"
             )
             
-            # الانتظار لمدة دقيقة واحدة (60 ثانية) لمتابعة صفقة M1
-            await asyncio.sleep(60) 
+            # الانتظار لمدة 5 دقائق (300 ثانية)
+            await asyncio.sleep(300) 
             
             _, new_price, _, _, _, _, _, _, _ = get_market_signals(source=source)
             exit_time_str = datetime.now().strftime("%H:%M:%S")
@@ -292,7 +290,7 @@ async def trading_loop(chat_id: int, context: ContextTypes.DEFAULT_TYPE):
                 await context.bot.send_message(
                     chat_id=chat_id,
                     text=(
-                        f"✅ **صفقة ناجحة (M1)!**\n"
+                        f"✅ **صفقة ناجحة (M5)!**\n"
                         f"• ⏰ وقت الخروج: `{exit_time_str}`\n"
                         f"• 📍 سعر الدخول: `{price:.2f}`\n"
                         f"• 🏁 سعر الإغلاق: `{new_price:.2f}`\n"
@@ -306,7 +304,7 @@ async def trading_loop(chat_id: int, context: ContextTypes.DEFAULT_TYPE):
                 await context.bot.send_message(
                     chat_id=chat_id,
                     text=(
-                        f"❌ **صفقة خاسرة (M1)!**\n"
+                        f"❌ **صفقة خاسرة (M5)!**\n"
                         f"• ⏰ وقت الخروج: `{exit_time_str}`\n"
                         f"• 📍 سعر الدخول: `{price:.2f}`\n"
                         f"• 🏁 سعر الإغلاق: `{new_price:.2f}`\n"
@@ -316,8 +314,7 @@ async def trading_loop(chat_id: int, context: ContextTypes.DEFAULT_TYPE):
                     parse_mode="Markdown"
                 )
                 
-        # الفحص كل 10 ثوانٍ لفريم M1 السريع
-        await asyncio.sleep(10)
+        await asyncio.sleep(30)
 
 # ==========================================
 # 7. المعالجات والأوامر
@@ -332,9 +329,9 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         data["data_source"] = "twelvedata"
 
     await update.message.reply_text(
-        "👋 **أهلاً بك في بوت إشارات الذهب المباشرة (SPOT GOLD M1)!**\n\n"
+        "👋 **أهلاً بك في بوت إشارات الذهب المباشرة (SPOT GOLD M5)!**\n\n"
         "🎯 **الزوج:** Spot Gold Ounce vs US Dollar (`GOLD` / `XAU/USD`)\n"
-        "⏱️ **الإطار الزمني:** دقيقة واحدة (M1)\n"
+        "⏱️ **الإطار الزمني:** 5 دقائق (M5)\n"
         "استخدم الأزرار أدناه للتحكم بجميع الخيارات:",
         reply_markup=main_menu_keyboard(data["data_source"]),
         parse_mode="Markdown"
@@ -372,7 +369,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif query.data == "start_trading":
         if data.get("is_running", False):
             await query.edit_message_text(
-                "⚠️ **البوت يعمل بالفعل حالياً على M1!**",
+                "⚠️ **البوت يعمل بالفعل حالياً على M5!**",
                 reply_markup=main_menu_keyboard(source),
                 parse_mode="Markdown"
             )
@@ -383,7 +380,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             source_display = f"{'Twelve Data (GOLD)' if source == 'twelvedata' else 'yfinance (GC=F)'} ({status_str})"
             
             await query.edit_message_text(
-                f"🟢 **تم تشغيل تحليل SPOT GOLD M1!**\n"
+                f"🟢 **تم تشغيل تحليل SPOT GOLD M5!**\n"
                 f"• المصدر النشط: `{source_display}`\n"
                 f"• الرصيد الحالي: {data['balance']:.2f}$\n"
                 f"• مبلغ الصفقة المحدد: {data['base_stake']:.2f}$",
@@ -440,7 +437,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(
             f"📊 **حالة الحساب والمصدر:**\n"
             f"• **الزوج المعتمد:** `Spot Gold Ounce vs USD`\n"
-            f"• **الفريم:** `M1 (1 Minute)`\n"
+            f"• **الفريم:** `M5 (5 Minutes)`\n"
             f"• **المصدر:** `{source_display}`\n"
             f"• **حالة الاتصال المباشرة:** {status_str}\n"
             f"• **الرصيد الحالي:** {data['balance']:.2f}$\n"
@@ -474,7 +471,7 @@ def main():
     application.add_handler(CommandHandler("start", start_command))
     application.add_handler(CallbackQueryHandler(button_handler))
 
-    print("⚡ البوت المطور يعمل على SPOT GOLD M1...")
+    print("⚡ البوت المطور يعمل على SPOT GOLD M5...")
     application.run_polling()
 
 if __name__ == '__main__':
