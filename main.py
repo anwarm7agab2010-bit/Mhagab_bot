@@ -3,7 +3,6 @@ import logging
 import os
 import time
 from datetime import datetime
-import requests
 import pandas as pd
 import yfinance as yf
 from flask import Flask
@@ -29,34 +28,17 @@ def keep_alive():
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 
 TOKEN = "8916738723:AAG8YR35bIX-90HGUdjllwjGkiqbongI9lk"
-TWELVE_DATA_API_KEY = os.environ.get("TWELVE_DATA_API_KEY", "C8c6abe66da242369986f71fd1cac414").strip()
 
-API_COUNTER = {
-    "used_today": 27,
-    "max_daily": 800,
-    "last_reset_day": datetime.now().day
-}
-
-def increment_api_counter():
-    today = datetime.now().day
-    if today != API_COUNTER["last_reset_day"]:
-        API_COUNTER["used_today"] = 0
-        API_COUNTER["last_reset_day"] = today
-    API_COUNTER["used_today"] += 1
-
-def test_twelve_data_connection():
-    """دالة لاختبار سحب البيانات عبر دمج المفتاح مباشرة في الرابط"""
-    increment_api_counter()
-    # دمج المفتاح مباشرة في الرابط لتجنب أي مشاكل في تمرير الـ params
-    url = f"https://api.twelvedata.com/time_series?symbol=XAU/USD&interval=5min&outputsize=1&apikey={TWELVE_DATA_API_KEY}"
+def test_yfinance_connection():
+    """اختبار سحب بيانات الذهب عبر yfinance بدون مفتاح API"""
     try:
-        response = requests.get(url, timeout=10)
-        data = response.json()
-        if "values" in data:
-            return True, data["values"][0]["close"]
+        ticker = yf.Ticker("GC=F")
+        df = ticker.history(period="1d", interval="5m")
+        if not df.empty:
+            current_price = df['Close'].iloc[-1]
+            return True, current_price
         else:
-            # إعادة العداد إذا فشل الطلب فعلياً ولم يتم احتسابه
-            return False, data.get("message", "Unknown error")
+            return False, "البيانات فارغة أو السوق مغلق"
     except Exception as e:
         return False, str(e)
 
@@ -67,10 +49,10 @@ def main_menu_keyboard():
             InlineKeyboardButton("⏹️ إيقاف التداول", callback_data="stop_trading")
         ],
         [
-            InlineKeyboardButton("⚡ اختبار سحب API يدوي الآن", callback_data="test_api_now")
+            InlineKeyboardButton("⚡ اختبار سحب السعر الآن (yfinance)", callback_data="test_api_now")
         ],
         [
-            InlineKeyboardButton("📊 حالة الحساب وعداد API", callback_data="check_status"),
+            InlineKeyboardButton("📊 حالة البوت", callback_data="check_status"),
             InlineKeyboardButton("🔄 إعادة ضبط الرصيد", callback_data="reset_balance")
         ]
     ]
@@ -85,7 +67,9 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         data["is_running"] = False
 
     await update.message.reply_text(
-        "👋 **أهلاً بك في بوت إشارات الذهب (M5):**\nاضغط على زر **⚡ اختبار سحب API يدوي الآن** للتأكد من عمل المفتاح فوراً.",
+        "👋 **أهلاً بك في بوت إشارات الذهب (M5 - بدون مفتاح API):**\n"
+        "يعتمد هذا الإصدار على بيانات `yfinance` المباشرة للذهب (`GC=F`).\n"
+        "اضغط على زر **⚡ اختبار سحب السعر الآن** للتأكد من عمل السحب فوراً.",
         reply_markup=main_menu_keyboard(),
         parse_mode="Markdown"
     )
@@ -94,7 +78,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     data = context.user_data
-    chat_id = query.message.chat_id
 
     if "balance" not in data:
         data["balance"] = 1000.0
@@ -103,39 +86,38 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         data["is_running"] = False
 
     if query.data == "test_api_now":
-        success, result = test_twelve_data_connection()
+        success, result = test_yfinance_connection()
         if success:
             await query.edit_message_text(
-                f"✅ **نجح الاتصال وسحب البيانات بنجاح!**\n• سعر الذهب الحالي: `{result}`\n• تم التحقق من المفتاح وتحديث العداد.",
+                f"✅ **نجح سحب السعر بنجاح تام!**\n• سعر عقود الذهب (GC=F): `{result:.2f}`\n• لا توجد حاجة لأي مفتاح API خارجي بعد الآن.",
                 reply_markup=main_menu_keyboard(),
                 parse_mode="Markdown"
             )
         else:
             await query.edit_message_text(
-                f"❌ **خطأ من المنصة:**\n`{result}`",
+                f"❌ **تنبيه:**\n`{result}`\n*(ملاحظة: إذا كان السوق مغلقاً في عطلة نهاية الأسبوع، قد لا توجد بيانات جديدة لحظية)*",
                 reply_markup=main_menu_keyboard(),
                 parse_mode="Markdown"
             )
 
     elif query.data == "start_trading":
         data["is_running"] = True
-        await query.edit_message_text("🟢 تم تشغيل البوت.", reply_markup=main_menu_keyboard(), parse_mode="Markdown")
+        await query.edit_message_text("🟢 تم تشغيل البوت بنجاح.", reply_markup=main_menu_keyboard(), parse_mode="Markdown")
 
     elif query.data == "stop_trading":
         data["is_running"] = False
         await query.edit_message_text("🛑 تم إيقاف البوت.", reply_markup=main_menu_keyboard(), parse_mode="Markdown")
 
     elif query.data == "check_status":
-        used = API_COUNTER["used_today"]
         await query.edit_message_text(
-            f"📊 **عداد الطلبات اليومي:**\n• المستهلك: `{used} / 800`",
+            f"📊 **حالة النظام:**\n• المصدر: `yfinance (GC=F)`\n• الإطار الزمني: `5 دقائق (M5)`\n• الرصيد: `{data['balance']:.2f}$`",
             reply_markup=main_menu_keyboard(),
             parse_mode="Markdown"
         )
 
     elif query.data == "reset_balance":
         data["balance"] = 1000.0
-        await query.edit_message_text("🔄 تم إعادة ضبط الرصيد.", reply_markup=main_menu_keyboard(), parse_mode="Markdown")
+        await query.edit_message_text("🔄 تم إعادة ضبط الرصيد إلى 1000$.", reply_markup=main_menu_keyboard(), parse_mode="Markdown")
 
     elif query.data == "main_menu":
         await query.edit_message_text("القائمة الرئيسية:", reply_markup=main_menu_keyboard(), parse_mode="Markdown")
