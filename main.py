@@ -30,19 +30,48 @@ def keep_alive():
     t.start()
 
 # ==========================================
-# 2. الإعدادات وتوكن التليجرام ومفتاح API
+# 2. الإعدادات والتوكن ومفتاح API وعداد الطلبات
 # ==========================================
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 
 TOKEN = "8916738723:AAG8YR35bIX-90HGUdjllwjGkiqbongI9lk"
 TWELVE_DATA_API_KEY = os.environ.get("TWELVE_DATA_API_KEY", "C8c6abe66da242369986f71fd1cac414").strip()
 
+# هيكل عداد الطلبات لـ Twelve Data
+API_COUNTER = {
+    "used_today": 0,
+    "max_daily": 800,
+    "last_reset_day": datetime.now().day
+}
+
+def increment_api_counter():
+    """تحديث العداد مع كل طلب وإعادة تصفيره عند بداية يوم جديد"""
+    today = datetime.now().day
+    if today != API_COUNTER["last_reset_day"]:
+        API_COUNTER["used_today"] = 0
+        API_COUNTER["last_reset_day"] = today
+    
+    API_COUNTER["used_today"] += 1
+
+def fetch_live_api_usage():
+    """جلب الاستهلاك الفعلي مباشرة من خوادم Twelve Data إن أمكن"""
+    try:
+        url = f"https://api.twelvedata.com/api_usage?apikey={TWELVE_DATA_API_KEY}"
+        res = requests.get(url, timeout=5)
+        if res.status_code == 200:
+            data = res.json()
+            if "current_usage" in data:
+                API_COUNTER["used_today"] = data["current_usage"]
+                if "plan_limit" in data:
+                    API_COUNTER["max_daily"] = data["plan_limit"]
+    except Exception:
+        pass  # الاعتماد على العداد المحلي في حالة تعذر الجلب المباشر
+
 # ==========================================
-# 3. دالة فحص حالة المصدر المعتمدة (بدون إهدار API)
+# 3. دالة فحص حالة المصدر
 # ==========================================
 def check_source_status(source="twelvedata"):
     if source == "twelvedata":
-        # طالما المفتاح موجود فالمصدر جاهز ومستقر
         return len(TWELVE_DATA_API_KEY) > 10
     else:
         try:
@@ -72,7 +101,7 @@ def main_menu_keyboard(source="twelvedata"):
             InlineKeyboardButton("💵 تعديل مبلغ الصفقة", callback_data="change_stake_menu")
         ],
         [
-            InlineKeyboardButton("📊 حالة الحساب والمصدر", callback_data="check_status"),
+            InlineKeyboardButton("📊 حالة الحساب وعداد API", callback_data="check_status"),
             InlineKeyboardButton("🔄 إعادة ضبط الرصيد (1000$)", callback_data="reset_balance")
         ]
     ]
@@ -97,7 +126,7 @@ def stake_selection_keyboard():
     return InlineKeyboardMarkup(keyboard)
 
 # ==========================================
-# 5. خوارزمية التحليل وإصدار الإشارات
+# 5. خوارزمية التحليل مع تسجيل الطلبات في العداد
 # ==========================================
 def get_market_signals(source="twelvedata"):
     try:
@@ -111,6 +140,8 @@ def get_market_signals(source="twelvedata"):
             high = df['High']
             low = df['Low']
         else:
+            # تسجيل الطلب في العداد عند الاتصال بـ Twelve Data
+            increment_api_counter()
             params = {
                 "symbol": "XAU/USD",
                 "interval": "5min",
@@ -121,7 +152,7 @@ def get_market_signals(source="twelvedata"):
             data = response.json()
 
             if "values" not in data or len(data["values"]) < 50:
-                # تجربة XAUUSD كرمز بديل
+                increment_api_counter()
                 params["symbol"] = "XAUUSD"
                 response = requests.get("https://api.twelvedata.com/time_series", params=params, timeout=10)
                 data = response.json()
@@ -317,7 +348,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(
         "👋 **أهلاً بك في بوت إشارات الذهب المتقدم (M5)!**\n\n"
-        "🎯 **الميزات:** الربط المباشر بـ Twelve Data و yfinance.\n"
+        "🎯 **الميزات:** الربط المباشر مع Twelve Data و yfinance + عداد لحساب استهلاك الـ API.\n"
         "استخدم الأزرار أدناه للتحكم بجميع الخيارات:",
         reply_markup=main_menu_keyboard(data["data_source"]),
         parse_mode="Markdown"
@@ -410,18 +441,30 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
     elif query.data == "check_status":
+        # تحديث الجلب المباشر للاستهلاك قبل العرض
+        fetch_live_api_usage()
+        
         is_active = check_source_status(source)
         status_str = "🟢 نشط ومتصل" if is_active else "🔴 غير نشط"
         status_bot = "🟢 يعمل" if data.get("is_running", False) else "🔴 متوقف"
         source_display = "Twelve Data ⚡" if source == "twelvedata" else "yfinance 📈"
         
+        used = API_COUNTER["used_today"]
+        limit = API_COUNTER["max_daily"]
+        remains = max(0, limit - used)
+        pct = (used / limit) * 100 if limit > 0 else 0
+        
         await query.edit_message_text(
             f"📊 **حالة الحساب والمصدر:**\n"
-            f"• المصدر المعتمد: `{source_display}`\n"
-            f"• حالة المصدر المباشرة: {status_str}\n"
-            f"• الرصيد الحالي: {data['balance']:.2f}$\n"
-            f"• مبلغ الصفقة الأساسي: {data['base_stake']:.2f}$\n"
-            f"• حالة التداول: {status_bot}",
+            f"• **المصدر المعتمد:** `{source_display}`\n"
+            f"• **حالة الاتصال المباشرة:** {status_str}\n"
+            f"• **الرصيد الحالي:** {data['balance']:.2f}$\n"
+            f"• **مبلغ الصفقة الأساسي:** {data['base_stake']:.2f}$\n"
+            f"• **حالة التداول:** {status_bot}\n\n"
+            f"📈 **عداد طلبات API (Twelve Data):**\n"
+            f"• **المستهلك اليوم:** `{used} / {limit}` طلب\n"
+            f"• **المتبقي اليوم:** `{remains}` طلب\n"
+            f"• **نسبة الاستهلاك:** `{pct:.1f}%`",
             reply_markup=main_menu_keyboard(source),
             parse_mode="Markdown"
         )
@@ -446,7 +489,7 @@ def main():
     application.add_handler(CommandHandler("start", start_command))
     application.add_handler(CallbackQueryHandler(button_handler))
 
-    print("⚡ البوت المستقر يعمل الآن...")
+    print("⚡ البوت المطور يعمل مع عداد استهلاك الـ API...")
     application.run_polling()
 
 if __name__ == '__main__':
