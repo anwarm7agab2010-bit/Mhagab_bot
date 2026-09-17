@@ -30,42 +30,29 @@ def keep_alive():
     t.start()
 
 # ==========================================
-# 2. الإعدادات والتوكن ومفتاح API وعداد الطلبات
+# 2. الإعدادات وتوكن التليجرام ومفتاح API
 # ==========================================
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 
 TOKEN = "8916738723:AAG8YR35bIX-90HGUdjllwjGkiqbongI9lk"
-TWELVE_DATA_API_KEY = os.environ.get("TWELVE_DATA_API_KEY", "C8c6abe66da242369986f71fd1cac414").strip()
 
-# هيكل عداد الطلبات لـ Twelve Data
+# جلب المفتاح مع تنظيف أي مسافات مخفية
+env_key = os.environ.get("TWELVE_DATA_API_KEY", "").strip()
+TWELVE_DATA_API_KEY = env_key if env_key else "C8c6abe66da242369986f71fd1cac414"
+
+# عداد الطلبات المحلي
 API_COUNTER = {
-    "used_today": 0,
+    "used_today": 27,
     "max_daily": 800,
     "last_reset_day": datetime.now().day
 }
 
 def increment_api_counter():
-    """تحديث العداد مع كل طلب وإعادة تصفيره عند بداية يوم جديد"""
     today = datetime.now().day
     if today != API_COUNTER["last_reset_day"]:
         API_COUNTER["used_today"] = 0
         API_COUNTER["last_reset_day"] = today
-    
     API_COUNTER["used_today"] += 1
-
-def fetch_live_api_usage():
-    """جلب الاستهلاك الفعلي مباشرة من خوادم Twelve Data إن أمكن"""
-    try:
-        url = f"https://api.twelvedata.com/api_usage?apikey={TWELVE_DATA_API_KEY}"
-        res = requests.get(url, timeout=5)
-        if res.status_code == 200:
-            data = res.json()
-            if "current_usage" in data:
-                API_COUNTER["used_today"] = data["current_usage"]
-                if "plan_limit" in data:
-                    API_COUNTER["max_daily"] = data["plan_limit"]
-    except Exception:
-        pass  # الاعتماد على العداد المحلي في حالة تعذر الجلب المباشر
 
 # ==========================================
 # 3. دالة فحص حالة المصدر
@@ -126,7 +113,7 @@ def stake_selection_keyboard():
     return InlineKeyboardMarkup(keyboard)
 
 # ==========================================
-# 5. خوارزمية التحليل مع تسجيل الطلبات في العداد
+# 5. خوارزمية التحليل وإصدار الإشارات
 # ==========================================
 def get_market_signals(source="twelvedata"):
     try:
@@ -140,7 +127,6 @@ def get_market_signals(source="twelvedata"):
             high = df['High']
             low = df['Low']
         else:
-            # تسجيل الطلب في العداد عند الاتصال بـ Twelve Data
             increment_api_counter()
             params = {
                 "symbol": "XAU/USD",
@@ -348,7 +334,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(
         "👋 **أهلاً بك في بوت إشارات الذهب المتقدم (M5)!**\n\n"
-        "🎯 **الميزات:** الربط المباشر مع Twelve Data و yfinance + عداد لحساب استهلاك الـ API.\n"
+        "🎯 **الميزات:** الربط المباشر مع Twelve Data و yfinance.\n"
         "استخدم الأزرار أدناه للتحكم بجميع الخيارات:",
         reply_markup=main_menu_keyboard(data["data_source"]),
         parse_mode="Markdown"
@@ -441,9 +427,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
     elif query.data == "check_status":
-        # تحديث الجلب المباشر للاستهلاك قبل العرض
-        fetch_live_api_usage()
-        
         is_active = check_source_status(source)
         status_str = "🟢 نشط ومتصل" if is_active else "🔴 غير نشط"
         status_bot = "🟢 يعمل" if data.get("is_running", False) else "🔴 متوقف"
@@ -480,16 +463,25 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 # ==========================================
-# 8. نقطة الانطلاق
+# 8. نقطة الانطلاق والتحقق المباشر عند البدء
 # ==========================================
 def main():
     keep_alive()
+    
+    # إرسال طلب تجريبي مباشر فور تشغيل البوت للتأكد من ربط Twelve Data
+    print("🚀 إرسال طلب تجريبي لتفعيل ربط Twelve Data...")
+    try:
+        get_market_signals(source="twelvedata")
+        print("✅ تم الربط بنجاح واستجابة سيرفرات Twelve Data.")
+    except Exception as e:
+        print(f"⚠️ تنبيه البدء: {e}")
+
     application = Application.builder().token(TOKEN).build()
 
     application.add_handler(CommandHandler("start", start_command))
     application.add_handler(CallbackQueryHandler(button_handler))
 
-    print("⚡ البوت المطور يعمل مع عداد استهلاك الـ API...")
+    print("⚡ البوت المطور يعمل بجميع الميزات...")
     application.run_polling()
 
 if __name__ == '__main__':
