@@ -35,9 +35,28 @@ logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s
 TOKEN = "8916738723:AAG8YR35bIX-90HGUdjllwjGkiqbongI9lk"
 TWELVE_DATA_API_KEY = os.environ.get("TWELVE_DATA_API_KEY", "C8c6abe66da242369986f71fd1cac414").strip()
 
-# تم إدراج مفتاح OpenAI API الذي قمت بتزويده هنا مباشرة
+# مفتاح OpenAI API المدمج
 OPENAI_API_KEY = "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".strip()
 client = OpenAI(api_key=OPENAI_API_KEY)
+
+# ==========================================
+# 🔍 دالة فحص واختبار اتصال الذكاء الاصطناعي
+# ==========================================
+def test_openai_connection():
+    print("🔍 جاري فحص الاتصال بمحرك الذكاء الاصطناعي (OpenAI)...")
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": "أجب بكلمة واحدة فقط: متصل"}],
+            max_tokens=10
+        )
+        reply = response.choices[0].message.content.strip()
+        print(f"✅ نجح الاتصال بنجاح! رد نموذج الذكاء الاصطناعي: [{reply}]")
+        return True
+    except Exception as e:
+        print(f"❌ فشل الاتصال بمحرك الذكاء الاصطناعي! الخطأ: {e}")
+        print("⚠️ يرجى التأكد من صحة مفتاح API أو توفر رصيد في حسابك.")
+        return False
 
 API_COUNTER = {
     "used_today": 27,
@@ -391,6 +410,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("🔄 تمت إعادة ضبط الرصيد إلى 1000$", reply_markup=main_menu_keyboard(source, timeframe, ai_mode), parse_mode="Markdown")
 
 def main():
+    # تشغيل اختبار الذكاء الاصطناعي أولاً قبل تشغيل البوت وخادم الويب
+    test_openai_connection()
+    
     keep_alive()
     application = Application.builder().token(TOKEN).build()
     application.add_handler(CommandHandler("start", start_command))
