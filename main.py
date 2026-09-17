@@ -35,8 +35,8 @@ logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s
 TOKEN = "8916738723:AAG8YR35bIX-90HGUdjllwjGkiqbongI9lk"
 TWELVE_DATA_API_KEY = os.environ.get("TWELVE_DATA_API_KEY", "C8c6abe66da242369986f71fd1cac414").strip()
 
-# مفتاح OpenAI API (قم بوضعه هنا أو كمتبيعة بيئية Environment Variable)
-OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "ضع_مفتاح_أوبن_آي_هنا").strip()
+# تم إدراج مفتاح OpenAI API الذي قمت بتزويده هنا مباشرة
+OPENAI_API_KEY = "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".strip()
 client = OpenAI(api_key=OPENAI_API_KEY)
 
 API_COUNTER = {
@@ -125,10 +125,6 @@ def stake_selection_keyboard():
 # 3. التحليل الفني مع تكامل نموذج LLM
 # ==========================================
 def get_llm_trading_decision(indicators_data):
-    """
-    تقوم هذه الدالة بإرسال بيانات المؤشرات الفنية إلى نموذج OpenAI
-    للحصول على قرار ذكي ومبرر (CALL / PUT / WAIT)
-    """
     try:
         system_prompt = (
             "أنت خبير تداول آلي ومحلل أسواق مالية مخضرم، متخصص حصرياً في تداول الذهب الفوري (Spot Gold - XAU/USD). "
@@ -152,7 +148,7 @@ def get_llm_trading_decision(indicators_data):
         )
 
         response = client.chat.completions.create(
-            model="gpt-4o-mini",  # أو gpt-4o حسب رغبتك
+            model="gpt-4o-mini",
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt}
@@ -224,7 +220,6 @@ def get_market_signals(source="twelvedata", timeframe="5min", ai_mode=True):
         tr = pd.concat([high - low, (high - close.shift()).abs(), (low - close.shift()).abs()], axis=1).max(axis=1)
         atr = tr.rolling(window=14).mean().iloc[-1]
 
-        # تجميع المؤشرات لإرسالها للنموذج
         indicators = {
             "price": round(current_price, 2),
             "rsi": round(current_rsi, 1),
@@ -240,7 +235,6 @@ def get_market_signals(source="twelvedata", timeframe="5min", ai_mode=True):
             signal, reason = get_llm_trading_decision(indicators)
             return signal, current_price, current_rsi, stoch_k, ema200, reason
         else:
-            # خوارزمية افتراضية احتياطية إذا تم إلغاء تفعيل الذكاء الاصطناعي
             signal = "CALL" if current_rsi <= 35 else ("PUT" if current_rsi >= 65 else "WAIT")
             return signal, current_price, current_rsi, stoch_k, ema200, "تحليل خوارزمي اعتيادي"
 
