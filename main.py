@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import os
+import time
 from datetime import datetime
 import requests
 import pandas as pd
@@ -36,28 +37,40 @@ logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s
 TOKEN = "8916738723:AAG8YR35bIX-90HGUdjllwjGkiqbongI9lk"
 TWELVE_DATA_API_KEY = os.environ.get("TWELVE_DATA_API_KEY", "C8c6abe66da242369986f71fd1cac414")
 
+# ذاكرة تخزين مؤقت لمنع استهلاك حد API (تتحدث كل 3 دقائق)
+STATUS_CACHE = {"twelvedata": {"status": True, "last_check": 0}, "yfinance": {"status": True, "last_check": 0}}
+
 # ==========================================
-# 3. دالة فحص حالة المصدر بدقة (نشط / غير نشط)
+# 3. دالة فحص حالة المصدر المحدثة (مع نظام Caching)
 # ==========================================
 def check_source_status(source="twelvedata"):
+    now = time.time()
+    # إذا تم الفحص خلال آخر 180 ثانية، استخدم النتيجة المحفوظة لتوفير الـ API
+    if now - STATUS_CACHE[source]["last_check"] < 180:
+        return STATUS_CACHE[source]["status"]
+
     try:
         if source == "twelvedata":
             url = f"https://api.twelvedata.com/time_series?symbol=XAU/USD&interval=5min&outputsize=1&apikey={TWELVE_DATA_API_KEY}"
             res = requests.get(url, timeout=5)
-            if res.status_code == 200:
-                data = res.json()
-                return "values" in data and len(data["values"]) > 0
-            return False
+            data = res.json()
+            
+            # تكون القناة نشطة إذا عادت البيانات أو تم الوصول للحد المؤقت (429)
+            is_active = ("values" in data and len(data["values"]) > 0) or (data.get("code") == 429) or (data.get("status") == "ok")
+            STATUS_CACHE["twelvedata"] = {"status": is_active, "last_check": now}
+            return is_active
         else:
             ticker = yf.Ticker("GC=F")
             df = ticker.history(period="1d", interval="5m")
-            return not df.empty
+            is_active = not df.empty
+            STATUS_CACHE["yfinance"] = {"status": is_active, "last_check": now}
+            return is_active
     except Exception as e:
         print(f"خطأ أثناء فحص المصدر {source}: {e}")
-        return False
+        return STATUS_CACHE[source]["status"]
 
 # ==========================================
-# 4. لوحة الأزرار التفاعلية مع إظهار حالة المصدر
+# 4. لوحة الأزرار التفاعلية
 # ==========================================
 def main_menu_keyboard(source="twelvedata"):
     is_active = check_source_status(source)
@@ -120,7 +133,12 @@ def get_market_signals(source="twelvedata"):
             data = response.json()
 
             if "values" not in data or len(data["values"]) < 50:
-                return "WAIT", 0, 0, 0, 0, 0, 0, 0, ""
+                # محاولة ثانية بالرمز البديل XAUUSD إذا لزم
+                url_alt = f"https://api.twelvedata.com/time_series?symbol=XAUUSD&interval=5min&outputsize=100&apikey={TWELVE_DATA_API_KEY}"
+                response = requests.get(url_alt, timeout=10)
+                data = response.json()
+                if "values" not in data or len(data["values"]) < 50:
+                    return "WAIT", 0, 0, 0, 0, 0, 0, 0, ""
 
             df = pd.DataFrame(data["values"]).iloc[::-1].reset_index(drop=True)
             close = df['close'].astype(float)
@@ -311,7 +329,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(
         "👋 **أهلاً بك في بوت إشارات الذهب المتقدم (M5)!**\n\n"
-        "🎯 **الميزات:** الربط المباشر بـ Twelve Data و yfinance مع فحص فوري لحالة الاتصال.\n"
+        "🎯 **الميزات:** الربط المباشر بـ Twelve Data و yfinance مع الحفاظ على كوتا الـ API.\n"
         "استخدم الأزرار أدناه للتحكم بجميع الخيارات:",
         reply_markup=main_menu_keyboard(data["data_source"]),
         parse_mode="Markdown"
@@ -440,7 +458,7 @@ def main():
     application.add_handler(CommandHandler("start", start_command))
     application.add_handler(CallbackQueryHandler(button_handler))
 
-    print("⚡ البوت المطور يعمل مع فحص حالة المصدر أوتوماتيكياً...")
+    print("⚡ البوت المطور يعمل مع فحص حالة المصدر المحسّن...")
     application.run_polling()
 
 if __name__ == '__main__':
