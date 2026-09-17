@@ -18,7 +18,7 @@ app = Flask('')
 
 @app.route('/')
 def home():
-    return "Bot is running 24/7!"
+    return "Bot is running 24/7 with Adaptive AI Engine!"
 
 def run_flask():
     port = int(os.environ.get("PORT", 8080))
@@ -67,7 +67,7 @@ def check_source_status(source="twelvedata"):
 # ==========================================
 # 4. لوحة الأزرار التفاعلية (SPOT GOLD)
 # ==========================================
-def main_menu_keyboard(source="twelvedata", timeframe="5min"):
+def main_menu_keyboard(source="twelvedata", timeframe="5min", ai_mode=True):
     is_active = check_source_status(source)
     status_icon = "🟢 نشط" if is_active else "🔴 غير نشط"
     source_name = "Twelve Data" if source == "twelvedata" else "yfinance"
@@ -75,8 +75,11 @@ def main_menu_keyboard(source="twelvedata", timeframe="5min"):
     tf_names = {"1min": "1 دقيقة (M1)", "5min": "5 دقائق (M5)", "15min": "15 دقيقة (M15)"}
     tf_display = tf_names.get(timeframe, "5 دقائق (M5)")
     
+    ai_icon = "🤖 تكييف ذكي مفعل" if ai_mode else "⚙️ إعدادات ثابتة"
+    
     source_btn_text = f"⚙️ المصدر: {source_name} ({status_icon})"
     tf_btn_text = f"⏱️ الفريم: {tf_display}"
+    ai_btn_text = f"🧠 حالة الذكاء: {ai_icon}"
     
     keyboard = [
         [
@@ -88,10 +91,11 @@ def main_menu_keyboard(source="twelvedata", timeframe="5min"):
             InlineKeyboardButton(tf_btn_text, callback_data="timeframe_menu")
         ],
         [
-            InlineKeyboardButton("💵 تعديل مبلغ الصفقة", callback_data="change_stake_menu"),
-            InlineKeyboardButton("📊 حالة الحساب وعداد API", callback_data="check_status")
+            InlineKeyboardButton(ai_btn_text, callback_data="toggle_ai"),
+            InlineKeyboardButton("💵 تعديل مبلغ الصفقة", callback_data="change_stake_menu")
         ],
         [
+            InlineKeyboardButton("📊 حالة الحساب وعداد API", callback_data="check_status"),
             InlineKeyboardButton("🔄 إعادة ضبط الرصيد (1000$)", callback_data="reset_balance")
         ]
     ]
@@ -129,9 +133,9 @@ def stake_selection_keyboard():
     return InlineKeyboardMarkup(keyboard)
 
 # ==========================================
-# 5. خوارزمية التحليل لـ (Spot Gold) حسب الإطار الزمني
+# 5. محرك التحليل والذكاء التكيفي (Adaptive AI Engine)
 # ==========================================
-def get_market_signals(source="twelvedata", timeframe="5min"):
+def get_market_signals(source="twelvedata", timeframe="5min", ai_mode=True, recent_performance=0):
     try:
         if source == "yfinance":
             yf_intervals = {"1min": "1m", "5min": "5m", "15min": "15m"}
@@ -139,7 +143,7 @@ def get_market_signals(source="twelvedata", timeframe="5min"):
             ticker = yf.Ticker("GC=F")
             df = ticker.history(period="5d", interval=interval)
             if len(df) < 50:
-                return "WAIT", 0, 0, 0, 0, 0, 0, 0, ""
+                return "WAIT", 0, 0, 0, 0, 0, 0, 0, "", "غير متوفر"
             
             close = df['Close']
             high = df['High']
@@ -161,7 +165,7 @@ def get_market_signals(source="twelvedata", timeframe="5min"):
                 response = requests.get("https://api.twelvedata.com/time_series", params=params, timeout=10)
                 data = response.json()
                 if "values" not in data or len(data["values"]) < 50:
-                    return "WAIT", 0, 0, 0, 0, 0, 0, 0, ""
+                    return "WAIT", 0, 0, 0, 0, 0, 0, 0, "", "غير متوفر"
 
             df = pd.DataFrame(data["values"]).iloc[::-1].reset_index(drop=True)
             close = df['close'].astype(float)
@@ -170,17 +174,18 @@ def get_market_signals(source="twelvedata", timeframe="5min"):
 
         current_price = close.iloc[-1]
 
-        # 1. المتوسطات المتحركة (EMA 200 & EMA 50)
+        # حساب المؤشرات الفنية الأساسية
         ema200 = close.ewm(span=200, adjust=False).mean().iloc[-1] if len(close) >= 200 else close.ewm(span=len(close), adjust=False).mean().iloc[-1]
         ema50 = close.ewm(span=50, adjust=False).mean().iloc[-1]
+        ema20 = close.ewm(span=20, adjust=False).mean().iloc[-1]
 
-        # 2. Bollinger Bands (20, 2)
+        # Bollinger Bands (20, 2)
         sma20 = close.rolling(window=20).mean()
         std20 = close.rolling(window=20).std()
         upper_band = (sma20 + (2 * std20)).iloc[-1]
         lower_band = (sma20 - (2 * std20)).iloc[-1]
 
-        # 3. RSI (14)
+        # RSI (14)
         delta = close.diff()
         gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
         loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
@@ -188,57 +193,92 @@ def get_market_signals(source="twelvedata", timeframe="5min"):
         rsi_series = 100 - (100 / (1 + rs))
         current_rsi = rsi_series.iloc[-1]
 
-        # 4. Stochastic Oscillator (5, 3, 3)
+        # Stochastic Oscillator (5, 3, 3)
         low_5 = low.rolling(window=5).min()
         high_5 = high.rolling(window=5).max()
         k_fast = 100 * ((close - low_5) / (high_5 - low_5))
         stoch_k = k_fast.rolling(window=3).mean().iloc[-1]
 
-        # 5. MACD (12, 26, 9)
+        # MACD (12, 26, 9)
         ema12 = close.ewm(span=12, adjust=False).mean()
         ema26 = close.ewm(span=26, adjust=False).mean()
         macd_line = ema12 - ema26
         signal_line = macd_line.ewm(span=9, adjust=False).mean()
         macd_hist = (macd_line - signal_line).iloc[-1]
 
+        # حساب ATR (Average True Range) لقياس تقلبات سوق الذهب
+        tr1 = high - low
+        tr2 = (high - close.shift()).abs()
+        tr3 = (low - close.shift()).abs()
+        tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+        atr = tr.rolling(window=14).mean().iloc[-1]
+        atr_avg = tr.rolling(window=14).mean().mean()
+
+        # ==========================================
+        # الذكاء التكيفي لتعديل العتبات ديناميكياً
+        # ==========================================
+        market_regime = "عرضي متذبذب (Ranging)"
+        rsi_buy_threshold = 40
+        rsi_sell_threshold = 60
+        stoch_buy_threshold = 35
+        stoch_sell_threshold = 65
+        min_required_score = 60
+
+        if ai_mode:
+            # 1. كشف طبيعة السوق (هل السوق في ترند قوي أم تذبذب؟)
+            if abs(ema50 - ema200) > (atr * 1.5):
+                market_regime = "ترند قوي اتجاهي (Strong Trend 🚀)"
+                # في الترند القوي، نكون أكثر مرونة مع مؤشرات التشبع لتجنب عكس الاتجاه
+                rsi_buy_threshold = 45
+                rsi_sell_threshold = 55
+            elif atr > (atr_avg * 1.3):
+                market_regime = "تقلبات عالية حادة (High Volatility ⚡)"
+                # في التقلبات العالية، نرفع متطلبات الدقة لتقليل المخاطر
+                min_required_score = 70
+            
+            # 2. التعلم الذاتي من أداء الصفقات السابقة (Feedback Loop)
+            # إذا كانت الصفقات الأخيرة خاسرة، يقوم الذكاء الاصطناعي برفع نسبة الثقة المطلوبة تلقائياً
+            if recent_performance < 0:
+                min_required_score += 10
+            elif recent_performance > 0:
+                min_required_score = max(55, min_required_score - 5)
+
         score = 0
         signal = "WAIT"
 
         buy_conditions = [
             current_price > ema200 or current_price > ema50,
-            current_rsi <= 40,
-            stoch_k <= 35,
+            current_rsi <= rsi_buy_threshold,
+            stoch_k <= stoch_buy_threshold,
             current_price <= lower_band
         ]
         
         sell_conditions = [
             current_price < ema200 or current_price < ema50,
-            current_rsi >= 60,
-            stoch_k >= 65,
+            current_rsi >= rsi_sell_threshold,
+            stoch_k >= stoch_sell_threshold,
             current_price >= upper_band
         ]
 
-        if sum(buy_conditions) >= 2 and current_rsi <= 45:
+        if sum(buy_conditions) >= 2 and current_rsi <= (rsi_buy_threshold + 5):
             signal = "CALL"
             score = 60
             if current_price > ema200: score += 10
             if current_rsi <= 30: score += 10
-            if current_rsi <= 20: score += 5
             if stoch_k <= 20: score += 5
             if current_price <= lower_band: score += 5
             if macd_hist > 0: score += 5
 
-        elif sum(sell_conditions) >= 2 and current_rsi >= 55:
+        elif sum(sell_conditions) >= 2 and current_rsi >= (rsi_sell_threshold - 5):
             signal = "PUT"
             score = 60
             if current_price < ema200: score += 10
             if current_rsi >= 70: score += 10
-            if current_rsi >= 80: score += 5
             if stoch_k >= 80: score += 5
             if current_price >= upper_band: score += 5
             if macd_hist < 0: score += 5
 
-        if signal in ["CALL", "PUT"] and score >= 60:
+        if signal in ["CALL", "PUT"] and score >= min_required_score:
             if score >= 90:
                 strength_text = f"⭐⭐⭐⭐⭐ {score}% (فائقة القوة 🚀)"
             elif score >= 80:
@@ -248,24 +288,31 @@ def get_market_signals(source="twelvedata", timeframe="5min"):
             else:
                 strength_text = f"⭐⭐ {score}% (جيدة ⚡)"
 
-            return signal, current_price, upper_band, lower_band, current_rsi, stoch_k, ema200, score, strength_text
+            return signal, current_price, upper_band, lower_band, current_rsi, stoch_k, ema200, score, strength_text, market_regime
 
-        return "WAIT", current_price, upper_band, lower_band, current_rsi, stoch_k, ema200, 0, ""
+        return "WAIT", current_price, upper_band, lower_band, current_rsi, stoch_k, ema200, 0, "", market_regime
 
     except Exception as e:
-        print(f"خطأ في تحليل SPOT GOLD: {e}")
-        return "WAIT", 0, 0, 0, 0, 0, 0, 0, ""
+        print(f"خطأ في تحليل الذكاء التكيفي للذهب: {e}")
+        return "WAIT", 0, 0, 0, 0, 0, 0, 0, "", "خطأ في التحليل"
 
 # ==========================================
-# 6. حلقة التداول المباشرة لصفقات الذهب
+# 6. حلقة التداول المباشرة الذكية
 # ==========================================
 async def trading_loop(chat_id: int, context: ContextTypes.DEFAULT_TYPE):
     data = context.user_data
+    if "recent_performance" not in data:
+        data["recent_performance"] = 0
+
     while data.get("is_running", False):
         source = data.get("data_source", "twelvedata")
         timeframe = data.get("timeframe", "5min")
+        ai_mode = data.get("ai_mode", True)
+        recent_perf = data.get("recent_performance", 0)
         
-        signal, price, upper, lower, rsi, stoch, ema200, score, strength_text = get_market_signals(source=source, timeframe=timeframe)
+        signal, price, upper, lower, rsi, stoch, ema200, score, strength_text, regime = get_market_signals(
+            source=source, timeframe=timeframe, ai_mode=ai_mode, recent_performance=recent_perf
+        )
         stake = data.get("current_stake", 1.0)
         
         if signal in ["PUT", "CALL"] and score >= 60:
@@ -287,8 +334,8 @@ async def trading_loop(chat_id: int, context: ContextTypes.DEFAULT_TYPE):
             await context.bot.send_message(
                 chat_id=chat_id,
                 text=(
-                    f"🔥 **إشارة تداول جديدة (GOLD Spot - {tf_display_text}):**\n"
-                    f"• **الزوج:** Spot Gold Ounce vs USD (`GOLD` / `XAU/USD`)\n"
+                    f"🤖 **إشارة ذكية مدعومة بالتكييف الآلي (GOLD Spot - {tf_display_text}):**\n"
+                    f"• **حالة السوق المكتشفة:** `{regime}`\n"
                     f"• **المصدر:** `{source_display}`\n"
                     f"• **التوصية:** {action_text}\n"
                     f"• **قوة الإشارة:** {strength_text}\n"
@@ -296,18 +343,18 @@ async def trading_loop(chat_id: int, context: ContextTypes.DEFAULT_TYPE):
                     f"• **📍 سعر / نطاق الدخول:** `{price:.2f}` *(نطاق: {entry_zone_str})*\n"
                     f"• **💵 مبلغ الصفقة:** `{stake:.2f}$`\n"
                     f"• **الاتجاه العام:** {trend_text}\n"
-                    f"• **مؤشر RSI:** {rsi:.1f}\n"
-                    f"• **مؤشر Stochastic:** {stoch:.1f}\n\n"
+                    f"• **مؤشر RSI:** {rsi:.1f} | **Stochastic:** {stoch:.1f}\n\n"
                     f"⏱️ **المدة الموصى بها:** {tf_display_text}\n"
                     f"⏳ جاري متابعة الصفقة..."
                 ),
                 parse_mode="Markdown"
             )
             
-            # الانتظار حسب الفريم الزمني المختار
             await asyncio.sleep(sleep_duration) 
             
-            _, new_price, _, _, _, _, _, _, _ = get_market_signals(source=source, timeframe=timeframe)
+            _, new_price, _, _, _, _, _, _, _, _ = get_market_signals(
+                source=source, timeframe=timeframe, ai_mode=ai_mode, recent_performance=recent_perf
+            )
             exit_time_str = datetime.now().strftime("%H:%M:%S")
             
             is_win = (signal == "CALL" and new_price > price) or (signal == "PUT" and new_price < price)
@@ -315,10 +362,11 @@ async def trading_loop(chat_id: int, context: ContextTypes.DEFAULT_TYPE):
             if is_win:
                 data["balance"] += stake * 0.85
                 data["current_stake"] = data["base_stake"]
+                data["recent_performance"] = 1  # تسجيل نجاح لضبط الذكاء الاصطناعي
                 await context.bot.send_message(
                     chat_id=chat_id,
                     text=(
-                        f"✅ **صفقة ناجحة ({tf_display_text})!**\n"
+                        f"✅ **صفقة ناجحة وتكيف ممتاز للذكاء الاصطناعي!**\n"
                         f"• ⏰ وقت الخروج: `{exit_time_str}`\n"
                         f"• 📍 سعر الدخول: `{price:.2f}`\n"
                         f"• 🏁 سعر الإغلاق: `{new_price:.2f}`\n"
@@ -329,10 +377,11 @@ async def trading_loop(chat_id: int, context: ContextTypes.DEFAULT_TYPE):
             else:
                 data["balance"] -= stake
                 data["current_stake"] *= 2.0
+                data["recent_performance"] = -1  # تسجيل خسارة لزيادة الحذر بالدورة القادمة
                 await context.bot.send_message(
                     chat_id=chat_id,
                     text=(
-                        f"❌ **صفقة خاسرة ({tf_display_text})!**\n"
+                        f"❌ **صفقة خاسرة! الذكاء الاصطناعي يقوم برفع الحذر للدورة القادمة.**\n"
                         f"• ⏰ وقت الخروج: `{exit_time_str}`\n"
                         f"• 📍 سعر الدخول: `{price:.2f}`\n"
                         f"• 🏁 سعر الإغلاق: `{new_price:.2f}`\n"
@@ -356,13 +405,15 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         data["is_running"] = False
         data["data_source"] = "twelvedata"
         data["timeframe"] = "5min"
+        data["ai_mode"] = True
+        data["recent_performance"] = 0
 
     await update.message.reply_text(
-        "👋 **أهلاً بك في بوت إشارات الذهب المباشرة (SPOT GOLD)!**\n\n"
+        "👋 **أهلاً بك في بوت إشارات الذهب الذكي والتكيفي (SPOT GOLD AI)!**\n\n"
         "🎯 **الزوج:** Spot Gold Ounce vs US Dollar (`GOLD` / `XAU/USD`)\n"
-        "⏱️ **الإطار الزمني الحالي:** حسب اختيارك من القائمة\n"
+        "🧠 **الميزة الجديدة:** محرك تحليل ذكي يقرأ حالة السوق ويعدل المؤشرات تلقائياً.\n"
         "استخدم الأزرار أدناه للتحكم بجميع الخيارات:",
-        reply_markup=main_menu_keyboard(data["data_source"], data["timeframe"]),
+        reply_markup=main_menu_keyboard(data["data_source"], data["timeframe"], data["ai_mode"]),
         parse_mode="Markdown"
     )
 
@@ -380,9 +431,12 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         data["is_running"] = False
         data["data_source"] = "twelvedata"
         data["timeframe"] = "5min"
+        data["ai_mode"] = True
+        data["recent_performance"] = 0
 
     source = data.get("data_source", "twelvedata")
     timeframe = data.get("timeframe", "5min")
+    ai_mode = data.get("ai_mode", True)
 
     if query.data == "toggle_source":
         new_source = "yfinance" if source == "twelvedata" else "twelvedata"
@@ -393,7 +447,18 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         await query.edit_message_text(
             f"🔄 **تم تغيير مصدر البيانات إلى:** `{source_name}`\n• **حالة المصدر:** {status_str}",
-            reply_markup=main_menu_keyboard(new_source, timeframe),
+            reply_markup=main_menu_keyboard(new_source, timeframe, ai_mode),
+            parse_mode="Markdown"
+        )
+
+    elif query.data == "toggle_ai":
+        data["ai_mode"] = not ai_mode
+        new_ai_status = data["ai_mode"]
+        status_text = "🟢 مفعّل (تكيف تلقائي مع السوق)" if new_ai_status else "🔴 معطل (إعدادات تقليدية ثابتة)"
+        
+        await query.edit_message_text(
+            f"🧠 **حالة محرك الذكاء التكيفي:**\n• {status_text}",
+            reply_markup=main_menu_keyboard(source, timeframe, new_ai_status),
             parse_mode="Markdown"
         )
 
@@ -412,7 +477,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         await query.edit_message_text(
             f"✅ **تم تغيير الفريم الزمني بنجاح إلى:** `{tf_display_name}`",
-            reply_markup=main_menu_keyboard(source, tf_code),
+            reply_markup=main_menu_keyboard(source, tf_code, ai_mode),
             parse_mode="Markdown"
         )
 
@@ -420,7 +485,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if data.get("is_running", False):
             await query.edit_message_text(
                 "⚠️ **البوت يعمل بالفعل حالياً!**",
-                reply_markup=main_menu_keyboard(source, timeframe),
+                reply_markup=main_menu_keyboard(source, timeframe, ai_mode),
                 parse_mode="Markdown"
             )
         else:
@@ -431,12 +496,12 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             tf_display_name = {"1min": "دقيقة واحدة (M1)", "5min": "5 دقائق (M5)", "15min": "15 دقيقة (M15)"}.get(timeframe, timeframe)
             
             await query.edit_message_text(
-                f"🟢 **تم تشغيل تحليل SPOT GOLD!**\n"
+                f"🟢 **تم تشغيل التداول الذكي لـ SPOT GOLD!**\n"
                 f"• الفريم الزمني: `{tf_display_name}`\n"
+                f"• وضع الذكاء التكيفي: `{'مفعل 🤖' if ai_mode else 'معطل ⚙️'}`\n"
                 f"• المصدر النشط: `{source_display}`\n"
-                f"• الرصيد الحالي: {data['balance']:.2f}$\n"
-                f"• مبلغ الصفقة المحدد: {data['base_stake']:.2f}$",
-                reply_markup=main_menu_keyboard(source, timeframe),
+                f"• الرصيد الحالي: {data['balance']:.2f}$",
+                reply_markup=main_menu_keyboard(source, timeframe, ai_mode),
                 parse_mode="Markdown"
             )
             asyncio.create_task(trading_loop(chat_id, context))
@@ -445,7 +510,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         data["is_running"] = False
         await query.edit_message_text(
             "🛑 **تم إيقاف التداول.**",
-            reply_markup=main_menu_keyboard(source, timeframe),
+            reply_markup=main_menu_keyboard(source, timeframe, ai_mode),
             parse_mode="Markdown"
         )
 
@@ -464,14 +529,14 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         data["current_stake"] = new_val
         await query.edit_message_text(
             f"✅ **تم تعديل مبلغ الصفقة بنجاح إلى: {new_val:.2f}$**",
-            reply_markup=main_menu_keyboard(source, timeframe),
+            reply_markup=main_menu_keyboard(source, timeframe, ai_mode),
             parse_mode="Markdown"
         )
 
     elif query.data == "main_menu":
         await query.edit_message_text(
             "👋 **القائمة الرئيسية:**",
-            reply_markup=main_menu_keyboard(source, timeframe),
+            reply_markup=main_menu_keyboard(source, timeframe, ai_mode),
             parse_mode="Markdown"
         )
 
@@ -481,6 +546,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         status_bot = "🟢 يعمل" if data.get("is_running", False) else "🔴 متوقف"
         source_display = "Twelve Data (GOLD Spot)" if source == "twelvedata" else "yfinance (GC=F)"
         tf_display_name = {"1min": "دقيقة واحدة (M1)", "5min": "5 دقائق (M5)", "15min": "15 دقيقة (M15)"}.get(timeframe, timeframe)
+        ai_display = "🟢 مفعل (يتكيف تلقائياً)" if ai_mode else "🔴 معطل"
         
         used = API_COUNTER["used_today"]
         limit = API_COUNTER["max_daily"]
@@ -488,11 +554,12 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         pct = (used / limit) * 100 if limit > 0 else 0
         
         await query.edit_message_text(
-            f"📊 **حالة الحساب والمصدر:**\n"
+            f"📊 **حالة الحساب ونظام الذكاء الاصطناعي:**\n"
             f"• **الزوج المعتمد:** `Spot Gold Ounce vs USD`\n"
             f"• **الفريم الحالي:** `{tf_display_name}`\n"
+            f"• **محرك التكييف الذكي:** `{ai_display}`\n"
             f"• **المصدر:** `{source_display}`\n"
-            f"• **حالة الاتصال المباشرة:** {status_str}\n"
+            f"• **حالة الاتصال:** {status_str}\n"
             f"• **الرصيد الحالي:** {data['balance']:.2f}$\n"
             f"• **مبلغ الصفقة الأساسي:** {data['base_stake']:.2f}$\n"
             f"• **حالة التداول:** {status_bot}\n\n"
@@ -500,7 +567,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"• **المستهلك اليوم:** `{used} / {limit}` طلب\n"
             f"• **المتبقي اليوم:** `{remains}` طلب\n"
             f"• **نسبة الاستهلاك:** `{pct:.1f}%`",
-            reply_markup=main_menu_keyboard(source, timeframe),
+            reply_markup=main_menu_keyboard(source, timeframe, ai_mode),
             parse_mode="Markdown"
         )
 
@@ -508,9 +575,10 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         data["balance"] = 1000.0
         data["base_stake"] = 1.0
         data["current_stake"] = 1.0
+        data["recent_performance"] = 0
         await query.edit_message_text(
             "🔄 **تم إعادة ضبط الرصيد بنجاح إلى 1000.00$**",
-            reply_markup=main_menu_keyboard(source, timeframe),
+            reply_markup=main_menu_keyboard(source, timeframe, ai_mode),
             parse_mode="Markdown"
         )
 
@@ -524,7 +592,7 @@ def main():
     application.add_handler(CommandHandler("start", start_command))
     application.add_handler(CallbackQueryHandler(button_handler))
 
-    print("⚡ البوت المطور يعمل مع ميزة تغيير الفريمات للذهب...")
+    print("🤖 البوت الذكي المطور يعمل الآن مع محرك التكييف الآلي للسوق...")
     application.run_polling()
 
 if __name__ == '__main__':
