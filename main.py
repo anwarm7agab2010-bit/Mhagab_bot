@@ -37,10 +37,32 @@ TOKEN = "8916738723:AAG8YR35bIX-90HGUdjllwjGkiqbongI9lk"
 TWELVE_DATA_API_KEY = os.environ.get("TWELVE_DATA_API_KEY", "C8c6abe66da242369986f71fd1cac414")
 
 # ==========================================
-# 3. لوحة الأزرار التفاعلية (مع زر التبديل بين المصادر)
+# 3. دالة فحص حالة المصدر (نشط / غير نشط)
+# ==========================================
+def check_source_status(source="twelvedata"):
+    try:
+        if source == "twelvedata":
+            url = f"https://api.twelvedata.com/time_series?symbol=XAU/USD&interval=5min&outputsize=1&apikey={TWELVE_DATA_API_KEY}"
+            res = requests.get(url, timeout=5)
+            data = res.json()
+            return "values" in data
+        else:
+            ticker = yf.Ticker("GC=F")
+            df = ticker.history(period="1d", interval="5m")
+            return not df.empty
+    except Exception:
+        return False
+
+# ==========================================
+# 4. لوحة الأزرار التفاعلية مع إظهار حالة المصدر
 # ==========================================
 def main_menu_keyboard(source="twelvedata"):
-    source_btn_text = "⚡ المصدر: Twelve Data" if source == "twelvedata" else "📈 المصدر: yfinance"
+    is_active = check_source_status(source)
+    status_icon = "🟢 نشط" if is_active else "🔴 غير نشط"
+    source_name = "Twelve Data" if source == "twelvedata" else "yfinance"
+    
+    source_btn_text = f"⚙️ المصدر: {source_name} ({status_icon})"
+    
     keyboard = [
         [
             InlineKeyboardButton("▶️ تشغيل التداول المتقدم (M5)", callback_data="start_trading"),
@@ -51,7 +73,7 @@ def main_menu_keyboard(source="twelvedata"):
             InlineKeyboardButton("💵 تعديل مبلغ الصفقة", callback_data="change_stake_menu")
         ],
         [
-            InlineKeyboardButton("📊 حالة الحساب والرصيد", callback_data="check_status"),
+            InlineKeyboardButton("📊 حالة الحساب والمصدر", callback_data="check_status"),
             InlineKeyboardButton("🔄 إعادة ضبط الرصيد (1000$)", callback_data="reset_balance")
         ]
     ]
@@ -76,29 +98,25 @@ def stake_selection_keyboard():
     return InlineKeyboardMarkup(keyboard)
 
 # ==========================================
-# 4. خوارزمية التحليل يدعم كلا المصدرين (Twelve Data / yfinance)
+# 5. خوارزمية التحليل وإصدار الإشارات
 # ==========================================
 def get_market_signals(source="twelvedata"):
     try:
         if source == "yfinance":
-            # جلب البيانات من yfinance (رمز الذهب: GC=F)
             ticker = yf.Ticker("GC=F")
             df = ticker.history(period="5d", interval="5m")
             if len(df) < 50:
-                print("تنبيه: البيانات الجالبة من yfinance غير كافية")
                 return "WAIT", 0, 0, 0, 0, 0, 0, 0, ""
             
             close = df['Close']
             high = df['High']
             low = df['Low']
         else:
-            # جلب البيانات من Twelve Data API (رمز الذهب: XAU/USD)
             url = f"https://api.twelvedata.com/time_series?symbol=XAU/USD&interval=5min&outputsize=100&apikey={TWELVE_DATA_API_KEY}"
             response = requests.get(url, timeout=10)
             data = response.json()
 
             if "values" not in data or len(data["values"]) < 50:
-                print(f"تنبيه Twelve Data: {data.get('message', 'No values returned')}")
                 return "WAIT", 0, 0, 0, 0, 0, 0, 0, ""
 
             df = pd.DataFrame(data["values"]).iloc[::-1].reset_index(drop=True)
@@ -139,13 +157,10 @@ def get_market_signals(source="twelvedata"):
         signal_line = macd_line.ewm(span=9, adjust=False).mean()
         macd_hist = (macd_line - signal_line).iloc[-1]
 
-        # ------------------------------------------
         # حساب قوة الإشارة (تصفية 60% فما فوق)
-        # ------------------------------------------
         score = 0
         signal = "WAIT"
 
-        # شروط إشارة الشراء (BUY / CALL)
         buy_conditions = [
             current_price > ema200 or current_price > ema50,
             current_rsi <= 40,
@@ -153,7 +168,6 @@ def get_market_signals(source="twelvedata"):
             current_price <= lower_band
         ]
         
-        # شروط إشارة البيع (SELL / PUT)
         sell_conditions = [
             current_price < ema200 or current_price < ema50,
             current_rsi >= 60,
@@ -200,7 +214,7 @@ def get_market_signals(source="twelvedata"):
         return "WAIT", 0, 0, 0, 0, 0, 0, 0, ""
 
 # ==========================================
-# 5. حلقة التداول المباشرة
+# 6. حلقة التداول المباشرة
 # ==========================================
 async def trading_loop(chat_id: int, context: ContextTypes.DEFAULT_TYPE):
     data = context.user_data
@@ -281,7 +295,7 @@ async def trading_loop(chat_id: int, context: ContextTypes.DEFAULT_TYPE):
         await asyncio.sleep(30)
 
 # ==========================================
-# 6. المعالجات وأزرار التحكم
+# 7. المعالجات والأوامر
 # ==========================================
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = context.user_data
@@ -294,8 +308,8 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(
         "👋 **أهلاً بك في بوت إشارات الذهب المتقدم (M5)!**\n\n"
-        "🎯 **الميزات:** التحويل بين مصادر البيانات + إشارات مؤكدة + إدارة مخاطر تفاعلية.\n"
-        "استخدم الأزرار أدناه لتغيير المصدر أو التحكم بالبوت:",
+        "🎯 **الميزات:** إمكانية فحص المصدر النشط وتغييره بنقرة واحدة.\n"
+        "استخدم الأزرار أدناه للتحكم بجميع الخيارات:",
         reply_markup=main_menu_keyboard(data["data_source"]),
         parse_mode="Markdown"
     )
@@ -317,13 +331,14 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     source = data.get("data_source", "twelvedata")
 
     if query.data == "toggle_source":
-        # التبديل بين المصدرين
         new_source = "yfinance" if source == "twelvedata" else "twelvedata"
         data["data_source"] = new_source
+        is_active = check_source_status(new_source)
+        status_str = "🟢 نشط ومتصل" if is_active else "🔴 غير نشط حالياً"
         source_name = "yfinance 📈" if new_source == "yfinance" else "Twelve Data ⚡"
         
         await query.edit_message_text(
-            f"🔄 **تم تغيير مصدر البيانات بنجاح إلى:** `{source_name}`",
+            f"🔄 **تم تغيير مصدر البيانات إلى:** `{source_name}`\n• **حالة المصدر:** {status_str}",
             reply_markup=main_menu_keyboard(new_source),
             parse_mode="Markdown"
         )
@@ -337,7 +352,10 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
         else:
             data["is_running"] = True
-            source_display = "Twelve Data ⚡" if source == "twelvedata" else "yfinance 📈"
+            is_active = check_source_status(source)
+            status_str = "🟢 نشط" if is_active else "🔴 غير نشط"
+            source_display = f"{'Twelve Data ⚡' if source == 'twelvedata' else 'yfinance 📈'} ({status_str})"
+            
             await query.edit_message_text(
                 f"🟢 **تم تشغيل تحليل الذهب المتقدم (M5)!**\n"
                 f"• المصدر النشط: `{source_display}`\n"
@@ -383,14 +401,18 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
     elif query.data == "check_status":
-        status_text = "🟢 يعمل" if data.get("is_running", False) else "🔴 متوقف"
+        is_active = check_source_status(source)
+        status_str = "🟢 نشط ومتصل" if is_active else "🔴 غير نشط"
+        status_bot = "🟢 يعمل" if data.get("is_running", False) else "🔴 متوقف"
         source_display = "Twelve Data ⚡" if source == "twelvedata" else "yfinance 📈"
+        
         await query.edit_message_text(
-            f"📊 **حالة الحساب:**\n"
+            f"📊 **حالة الحساب والمصدر:**\n"
             f"• المصدر المعتمد: `{source_display}`\n"
+            f"• حالة المصدر المباشرة: {status_str}\n"
             f"• الرصيد الحالي: {data['balance']:.2f}$\n"
             f"• مبلغ الصفقة الأساسي: {data['base_stake']:.2f}$\n"
-            f"• حالة التداول: {status_text}",
+            f"• حالة التداول: {status_bot}",
             reply_markup=main_menu_keyboard(source),
             parse_mode="Markdown"
         )
@@ -406,7 +428,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 # ==========================================
-# 7. نقطة الانطلاق
+# 8. نقطة الانطلاق
 # ==========================================
 def main():
     keep_alive()
@@ -415,7 +437,7 @@ def main():
     application.add_handler(CommandHandler("start", start_command))
     application.add_handler(CallbackQueryHandler(button_handler))
 
-    print("⚡ البوت المطور جاهز للعمل مع خيار تبديل المصادر...")
+    print("⚡ البوت المطور يعمل مع فحص حالة المصدر أوتوماتيكياً...")
     application.run_polling()
 
 if __name__ == '__main__':
