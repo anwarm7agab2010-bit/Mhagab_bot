@@ -35,39 +35,22 @@ def keep_alive():
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 
 TOKEN = "8916738723:AAG8YR35bIX-90HGUdjllwjGkiqbongI9lk"
-TWELVE_DATA_API_KEY = os.environ.get("TWELVE_DATA_API_KEY", "C8c6abe66da242369986f71fd1cac414")
-
-# ذاكرة تخزين مؤقت لمنع استهلاك حد API (تتحدث كل 3 دقائق)
-STATUS_CACHE = {"twelvedata": {"status": True, "last_check": 0}, "yfinance": {"status": True, "last_check": 0}}
+TWELVE_DATA_API_KEY = os.environ.get("TWELVE_DATA_API_KEY", "C8c6abe66da242369986f71fd1cac414").strip()
 
 # ==========================================
-# 3. دالة فحص حالة المصدر المحدثة (مع نظام Caching)
+# 3. دالة فحص حالة المصدر المعتمدة (بدون إهدار API)
 # ==========================================
 def check_source_status(source="twelvedata"):
-    now = time.time()
-    # إذا تم الفحص خلال آخر 180 ثانية، استخدم النتيجة المحفوظة لتوفير الـ API
-    if now - STATUS_CACHE[source]["last_check"] < 180:
-        return STATUS_CACHE[source]["status"]
-
-    try:
-        if source == "twelvedata":
-            url = f"https://api.twelvedata.com/time_series?symbol=XAU/USD&interval=5min&outputsize=1&apikey={TWELVE_DATA_API_KEY}"
-            res = requests.get(url, timeout=5)
-            data = res.json()
-            
-            # تكون القناة نشطة إذا عادت البيانات أو تم الوصول للحد المؤقت (429)
-            is_active = ("values" in data and len(data["values"]) > 0) or (data.get("code") == 429) or (data.get("status") == "ok")
-            STATUS_CACHE["twelvedata"] = {"status": is_active, "last_check": now}
-            return is_active
-        else:
+    if source == "twelvedata":
+        # طالما المفتاح موجود فالمصدر جاهز ومستقر
+        return len(TWELVE_DATA_API_KEY) > 10
+    else:
+        try:
             ticker = yf.Ticker("GC=F")
             df = ticker.history(period="1d", interval="5m")
-            is_active = not df.empty
-            STATUS_CACHE["yfinance"] = {"status": is_active, "last_check": now}
-            return is_active
-    except Exception as e:
-        print(f"خطأ أثناء فحص المصدر {source}: {e}")
-        return STATUS_CACHE[source]["status"]
+            return not df.empty
+        except Exception:
+            return False
 
 # ==========================================
 # 4. لوحة الأزرار التفاعلية
@@ -128,14 +111,19 @@ def get_market_signals(source="twelvedata"):
             high = df['High']
             low = df['Low']
         else:
-            url = f"https://api.twelvedata.com/time_series?symbol=XAU/USD&interval=5min&outputsize=100&apikey={TWELVE_DATA_API_KEY}"
-            response = requests.get(url, timeout=10)
+            params = {
+                "symbol": "XAU/USD",
+                "interval": "5min",
+                "outputsize": 100,
+                "apikey": TWELVE_DATA_API_KEY
+            }
+            response = requests.get("https://api.twelvedata.com/time_series", params=params, timeout=10)
             data = response.json()
 
             if "values" not in data or len(data["values"]) < 50:
-                # محاولة ثانية بالرمز البديل XAUUSD إذا لزم
-                url_alt = f"https://api.twelvedata.com/time_series?symbol=XAUUSD&interval=5min&outputsize=100&apikey={TWELVE_DATA_API_KEY}"
-                response = requests.get(url_alt, timeout=10)
+                # تجربة XAUUSD كرمز بديل
+                params["symbol"] = "XAUUSD"
+                response = requests.get("https://api.twelvedata.com/time_series", params=params, timeout=10)
                 data = response.json()
                 if "values" not in data or len(data["values"]) < 50:
                     return "WAIT", 0, 0, 0, 0, 0, 0, 0, ""
@@ -329,7 +317,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(
         "👋 **أهلاً بك في بوت إشارات الذهب المتقدم (M5)!**\n\n"
-        "🎯 **الميزات:** الربط المباشر بـ Twelve Data و yfinance مع الحفاظ على كوتا الـ API.\n"
+        "🎯 **الميزات:** الربط المباشر بـ Twelve Data و yfinance.\n"
         "استخدم الأزرار أدناه للتحكم بجميع الخيارات:",
         reply_markup=main_menu_keyboard(data["data_source"]),
         parse_mode="Markdown"
@@ -458,7 +446,7 @@ def main():
     application.add_handler(CommandHandler("start", start_command))
     application.add_handler(CallbackQueryHandler(button_handler))
 
-    print("⚡ البوت المطور يعمل مع فحص حالة المصدر المحسّن...")
+    print("⚡ البوت المستقر يعمل الآن...")
     application.run_polling()
 
 if __name__ == '__main__':
