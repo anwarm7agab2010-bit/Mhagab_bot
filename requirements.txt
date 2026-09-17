@@ -1,5 +1,6 @@
 python-telegram-bot
-Flask
-pandas
+flask
 requests
+pandas
 yfinance
+openai
